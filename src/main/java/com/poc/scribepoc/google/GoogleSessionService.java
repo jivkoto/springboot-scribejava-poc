@@ -10,6 +10,7 @@ import java.util.Random;
 import java.util.concurrent.ExecutionException;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.annotation.SessionScope;
 
@@ -58,19 +59,18 @@ public class GoogleSessionService {
     
     //pass access_type=offline to get refresh token
     final Map<String, String> additionalParams = new HashMap<>();
-    additionalParams.put("access_type", "offline");
+    additionalParams.put(GoogleFieldConstants.FIELD_ACCESS_TYPE, GoogleFieldConstants.VALUE_OFFLINE);
     //force to reget refresh token (if user are asked not the first time)
-    additionalParams.put("prompt", "consent");
+    additionalParams.put(GoogleFieldConstants.FIELD_PROMPT, GoogleFieldConstants.VALUE_CONSENT);
     
     initiated = true;
     return service.getAuthorizationUrl(additionalParams);
   }
   
-  public GoogleBaseUserInfo handleCallback(GoogleAccessTokenResponse tokenResponseArg) 
+  public OAuth2AccessToken handleCallback(GoogleAccessTokenResponse tokenResponseArg) 
       throws ExecutionException, InterruptedException, IOException {
     if (!initiated || secretState == null) {
       log.error("Request not initiated!");
-      //TODO GO AWAY
       return null;
     }
     
@@ -80,49 +80,56 @@ public class GoogleSessionService {
       return null;
     }
     
-    //TODO check USER cancel
-    
     if (tokenResponseArg.getState() == null || !secretState.equals(tokenResponseArg.getState())) {
       log.error("Request does not match {} != {}", secretState, tokenResponseArg.getState());
-      //TODO Code does not match GO AWAY
       return null;
     } else {
       
       final OAuth20Service service = createOAuthService(secretState);
-      OAuth2AccessToken accessToken = service.getAccessToken(tokenResponseArg.getCode());
-      
-      final OAuthRequest request = new OAuthRequest(Verb.GET, PROTECTED_RESOURCE_URL);
-      service.signRequest(accessToken, request);
-      final Response response = service.execute(request);
-      log.info("{}", response.getCode());
-      log.info(response.getBody());
-      
-      //TODO check response code
-      
-      ObjectMapper mapper = new ObjectMapper();
-      TypeReference<Map<String, Object>> typeRef = new TypeReference<Map<String,Object>>() {};
-      HashMap<String, Object> valueMap = mapper.readValue(response.getBody(), typeRef);
-      
-      String email = (String)valueMap.get(GoogleFieldConstants.FIELD_EMAIL);
-      String id = (String)valueMap.get(GoogleFieldConstants.FIELD_ID);
-      String name = (String)valueMap.get(GoogleFieldConstants.FIELD_NAME);
-      boolean verifiedEmail = (boolean)valueMap.get(GoogleFieldConstants.FIELD_VERIFIED_EMAIL);
-      String givenName = (String)valueMap.get(GoogleFieldConstants.FIELD_GIVEN_NAME);
-      String familyName = (String)valueMap.get(GoogleFieldConstants.FIELD_FAMILY_NAME);
-      String link = (String)valueMap.get(GoogleFieldConstants.FIELD_LINK);
-      String picture = (String)valueMap.get(GoogleFieldConstants.FIELD_PICTURE);
-      
-      return new GoogleBaseUserInfo(id, name, email, verifiedEmail, givenName, familyName, link, picture);
+      return service.getAccessToken(tokenResponseArg.getCode());
     }
   }
   
+  public GoogleBaseUserInfo getUserInfo(OAuth2AccessToken accessToken) 
+      throws ExecutionException, InterruptedException, IOException {
+    
+    final OAuthRequest request = new OAuthRequest(Verb.GET, PROTECTED_RESOURCE_URL);
+    final OAuth20Service service = createOAuthService(null);
+    service.signRequest(accessToken, request);
+    final Response response = service.execute(request);
+    
+    if (HttpStatus.OK.value() != response.getCode()) {
+      log.error("[:handleCallback] response code not expected {}", response.getCode());
+      return null;
+    }
+
+    log.info("[:getUserInfo] {}", response.getBody());
+    
+    ObjectMapper mapper = new ObjectMapper();
+    TypeReference<Map<String, Object>> typeRef = new TypeReference<Map<String,Object>>() {};
+    HashMap<String, Object> valueMap = mapper.readValue(response.getBody(), typeRef);
+    
+    String email = (String)valueMap.get(GoogleFieldConstants.FIELD_EMAIL);
+    String id = (String)valueMap.get(GoogleFieldConstants.FIELD_ID);
+    String name = (String)valueMap.get(GoogleFieldConstants.FIELD_NAME);
+    boolean verifiedEmail = (boolean)valueMap.get(GoogleFieldConstants.FIELD_VERIFIED_EMAIL);
+    String givenName = (String)valueMap.get(GoogleFieldConstants.FIELD_GIVEN_NAME);
+    String familyName = (String)valueMap.get(GoogleFieldConstants.FIELD_FAMILY_NAME);
+    String link = (String)valueMap.get(GoogleFieldConstants.FIELD_LINK);
+    String picture = (String)valueMap.get(GoogleFieldConstants.FIELD_PICTURE);
+    
+    return new GoogleBaseUserInfo(id, name, email, verifiedEmail, givenName, familyName, link, picture);
+  }
+  
   private OAuth20Service createOAuthService(String secretStateArg) {
-    return new ServiceBuilder(appConfig.getClientId())
+    ServiceBuilder builder = new ServiceBuilder(appConfig.getClientId())
         .apiSecret(appConfig.getClientSecret())
         .scope("email") // replace with desired scope
-        .state(secretStateArg)
-        .callback(appConfig.getCallback())
-        .build(GoogleApi20.instance());
+        .callback(appConfig.getCallback());
+     if (secretStateArg != null) {
+       builder.state(secretStateArg);
+     }
+     return builder.build(GoogleApi20.instance());
   }
   
 }

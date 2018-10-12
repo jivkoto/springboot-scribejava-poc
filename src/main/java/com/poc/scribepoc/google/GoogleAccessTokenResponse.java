@@ -19,4 +19,12 @@ public class GoogleAccessTokenResponse {
   private String state;
   private String scope;
   private String error;
+  
+  public GoogleAccessTokenResponse(String codeArg, String stateArg, String scopeArg, String errorArg) {
+    super();
+    code = codeArg;
+    state = stateArg;
+    scope = scopeArg;
+    error = errorArg;
+  }
 }

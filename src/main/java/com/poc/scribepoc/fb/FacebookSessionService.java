@@ -10,6 +10,7 @@ import java.util.Random;
 import java.util.concurrent.ExecutionException;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.annotation.SessionScope;
 
@@ -58,63 +59,69 @@ public class FacebookSessionService {
   public String generateRequestToken() {
 
     secretState = "secret" + new Random().nextInt(999_999);
-
-    final OAuth20Service service = new ServiceBuilder(facebookAppConfig.getClientId())
-        .apiSecret(facebookAppConfig.getClientSecret())
-        .state(secretState)
-        .callback(facebookAppConfig.getCallback())
-        .scope(FB_PERMISSION_EMAIL)
-        .build(FacebookApi.customVersion(facebookAppConfig.getApiVersion()));
+    final OAuth20Service service = createOAuthService(secretState);
 
     initiated = true;
     return service.getAuthorizationUrl();
   }
 
-  public FacebookBaseUserInfo handleCallback(FacebookAccessTokenResponse tokenResponseArg) 
+  public OAuth2AccessToken handleCallback(FacebookAccessTokenResponse tokenResponseArg) 
       throws ExecutionException, InterruptedException, IOException {
 		if (!initiated || secretState == null) {
-			log.error("Request not initiated!");
-			//TODO GO AWAY
+			log.error("[:handleCallback] Request not initiated!");
 			return null;
 		}
 		
 		if (tokenResponseArg.getErrorCode() != null 
 		    || tokenResponseArg.getErrorMessage() != null 
 		    || tokenResponseArg.getCode() == null) {
-		  log.error("Response error");
+		  log.error("[:handleCallback] Response error");
 		  return null;
 		}
 		
-    //TODO check USER cancel
-		
 		if (tokenResponseArg.getState() == null || !secretState.equals(tokenResponseArg.getState())) {
 			log.error("Request does not match {} != {}", secretState, tokenResponseArg.getState());
-			//TODO Code does not match GO AWAY
 			return null;
 		} else {
-		    final OAuth20Service service = new ServiceBuilder(facebookAppConfig.getClientId())
-		                .apiSecret(facebookAppConfig.getClientSecret())
-		                .state(secretState)
-		                .callback(facebookAppConfig.getCallback())
-		                .scope(FB_PERMISSION_EMAIL)
-		                .build(FacebookApi.customVersion(facebookAppConfig.getApiVersion()));
-			final OAuth2AccessToken accessToken = service.getAccessToken(tokenResponseArg.getCode());
-			final OAuthRequest request = new OAuthRequest(Verb.GET, PROTECTED_RESOURCE_URL);
-			service.signRequest(accessToken, request);
-			
-			final Response response = service.execute(request);
-			log.info("{}", response.getCode());
-			log.info("{}", response.getBody());
-			
-			ObjectMapper mapper = new ObjectMapper();
-			TypeReference<Map<String, String>> typeRef = new TypeReference<Map<String,String>>() {};
-			HashMap<String, String> valueMap = mapper.readValue(response.getBody(), typeRef);
-			
-			String email = valueMap.get("email");
-			String id = valueMap.get("id");
-			String name = valueMap.get("name");
-			
-			return new FacebookBaseUserInfo(id, name, email);
+		  final OAuth20Service service = createOAuthService(secretState);
+			return service.getAccessToken(tokenResponseArg.getCode());
 		}
 	}
+  
+  public FacebookBaseUserInfo getUserInfo(OAuth2AccessToken accessTokenArg) 
+      throws ExecutionException, InterruptedException, IOException {
+    
+    final OAuth20Service service = createOAuthService(secretState);
+    final OAuthRequest request = new OAuthRequest(Verb.GET, PROTECTED_RESOURCE_URL);
+    service.signRequest(accessTokenArg, request);
+    
+    final Response response = service.execute(request);
+    if (HttpStatus.OK.value() != response.getCode()) {
+      log.error("[:handleCallback] response code not expected {}", response.getCode());
+      return null;
+    }
+
+    log.info("[:getUserInfo] {}", response.getBody());
+    
+    ObjectMapper mapper = new ObjectMapper();
+    TypeReference<Map<String, String>> typeRef = new TypeReference<Map<String,String>>() {};
+    HashMap<String, String> valueMap = mapper.readValue(response.getBody(), typeRef);
+    
+    String email = valueMap.get(FacebookFieldConstants.FIELD_EMAIL);
+    String id = valueMap.get(FacebookFieldConstants.FIELD_ID);
+    String name = valueMap.get(FacebookFieldConstants.FIELD_NAME);
+    
+    return new FacebookBaseUserInfo(id, name, email);
+  }
+  
+  private OAuth20Service createOAuthService(String secretStateArg) {
+    ServiceBuilder builder = new ServiceBuilder(facebookAppConfig.getClientId())
+        .apiSecret(facebookAppConfig.getClientSecret())
+        .callback(facebookAppConfig.getCallback())
+        .scope(FB_PERMISSION_EMAIL);
+    if (secretStateArg != null) {
+      builder.state(secretState);
+    }
+    return builder.build(FacebookApi.customVersion(facebookAppConfig.getApiVersion()));
+  }
 }
