@@ -120,7 +120,7 @@ public class FacebookSessionService {
         .callback(facebookAppConfig.getCallback())
         .scope(FB_PERMISSION_EMAIL);
     if (secretStateArg != null) {
-      builder.state(secretState);
+      builder.state(secretStateArg);
     }
     return builder.build(FacebookApi.customVersion(facebookAppConfig.getApiVersion()));
   }
